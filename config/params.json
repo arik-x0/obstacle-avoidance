@@ -1,0 +1,90 @@
+{
+    "log_level": "DEBUG",
+    "log_file":  "",
+
+    "mavsdk": {
+        "connection_url":          "udpin://0.0.0.0:14540",
+        "connect_timeout_s":       30.0,
+        "telemetry_rate_hz":       20.0,
+        "enable_debug_sniffer":    true,
+        "enable_statustext":       true,
+        "debug_dump_interval_s":   5.0
+    },
+
+    "camera": {
+        "device_index":    0,
+        "source_url":      "",
+        "width":           640,
+        "height":          480,
+        "fps":             30,
+        "flip_horizontal": false,
+        "show_preview":    false
+    },
+
+    "detector": {
+        "use_background_sub":  false,
+        "canny_low":           50,
+        "canny_high":          150,
+        "blur_kernel":         5,
+        "min_area_ratio":      0.005,
+        "max_area_ratio":      0.90,
+        "left_sector_end":     0.35,
+        "right_sector_start":  0.65,
+        "draw_debug":          false
+    },
+
+    "depth": {
+        "window_size":        10,
+        "ttc_max_s":          30.0,
+        "min_confidence":     0.3,
+        "max_approach_slope": 0.5
+    },
+
+    "avoidance": {
+        "cruise_speed_m_s":  3.0,
+        "dodge_speed_m_s":   2.0,
+        "ascent_speed_m_s":  1.0,
+        "ttc_clear_s":       10.0,
+        "ttc_warn_s":        6.0,
+        "ttc_brake_s":       3.0,
+        "ttc_dodge_s":       2.0,
+        "max_forward_speed": 5.0,
+        "max_lateral_speed": 3.0,
+        "lateral_kp":        1.5,
+        "lateral_ki":        0.0,
+        "lateral_kd":        0.2
+    },
+
+    "pid": {
+        "loop_rate_hz":              20.0,
+        "ttc_target_s":              5.0,
+        "fwd_kp":                    0.15,
+        "fwd_ki":                    0.02,
+        "fwd_kd":                    0.05,
+        "fwd_max_integral":          2.0,
+        "alt_kp":                    0.8,
+        "alt_ki":                    0.05,
+        "alt_kd":                    0.2,
+        "alt_max_integral":          1.0,
+        "alt_max_output_m_s":        1.5,
+        "lat_kp":                    1.2,
+        "lat_ki":                    0.0,
+        "lat_kd":                    0.15,
+        "lat_max_integral":          1.0,
+        "lat_max_output_m_s":        1.5,
+        "max_delta_speed_per_tick":  0.5
+    },
+
+    "command": {
+        "takeoff_altitude_m":    5.0,
+        "offboard_heartbeat_ms": 400.0
+    },
+
+    "control": {
+        "loop_rate_hz":     5.0,
+        "takeoff_alt_m":    5.0,
+        "cruising_alt_m":   5.0,
+        "alt_reached_tol":  0.5,
+        "auto_arm_takeoff": false
+    }
+}
