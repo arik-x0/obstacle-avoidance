@@ -5,7 +5,6 @@
 #include <atomic>
 
 #include <mavsdk/mavsdk.h>
-#include <mavsdk/system.h>
 
 #include "../utils/logger.hpp"
 
