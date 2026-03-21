@@ -7,11 +7,11 @@ A C++17 monocular obstacle avoidance system for PX4 / ArduPilot SITL drones, bui
 ## Architecture overview
 
 ```
-Camera HW ──► CameraService ──► DetectionService ──► DepthService ──┐
+Camera HW ──► CameraService ──► DetectionService ──► DepthService   ──┐
                                                                       │
-MAVSDK Telemetry ──► TelemetryService ──► EKFRingBuffer ─────────────┤
+MAVSDK Telemetry ──► TelemetryService ──► EKFRingBuffer  ─────────────┤
                              │                                        │
-                             └──► DataChannel<EKFSnapshot>           │
+                             └──► DataChannel<EKFSnapshot>            │
                                                                       ▼
                                                                SyncService
                                                                       │
