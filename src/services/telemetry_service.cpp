@@ -26,13 +26,13 @@ void TelemetryService::run() {
     passthrough_ = std::make_unique<mavsdk::MavlinkPassthrough>(*system);
     debugger_    = std::make_unique<MavsdkDebugger>(*passthrough_, logger_);
 
-    // Set telemetry rates
-    telemetry_->set_rate_attitude_euler(cfg_.telemetry_rate_hz);
-    telemetry_->set_rate_attitude_quaternion(cfg_.telemetry_rate_hz);
-    telemetry_->set_rate_position(cfg_.telemetry_rate_hz);
-    telemetry_->set_rate_position_velocity_ned(cfg_.telemetry_rate_hz);
-    telemetry_->set_rate_in_air(cfg_.telemetry_rate_hz);
-    telemetry_->set_rate_flight_mode(cfg_.telemetry_rate_hz);
+    // Set telemetry rates per stream type
+    telemetry_->set_rate_attitude_quaternion(cfg_.attitude_rate_hz);
+    telemetry_->set_rate_attitude_euler(cfg_.attitude_rate_hz);
+    telemetry_->set_rate_position_velocity_ned(cfg_.velocity_rate_hz);
+    telemetry_->set_rate_position(cfg_.velocity_rate_hz);
+    telemetry_->set_rate_in_air(cfg_.status_rate_hz);
+    telemetry_->set_rate_flight_mode(cfg_.status_rate_hz);
 
     setup_subscriptions();
 

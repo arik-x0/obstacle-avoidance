@@ -137,7 +137,9 @@ int main(int argc, char** argv) {
     TelemetryConfig telem_cfg;
     if (cfg.contains("mavsdk")) {
         auto& m = cfg["mavsdk"];
-        telem_cfg.telemetry_rate_hz      = get_or<double>(m, "telemetry_rate_hz",      telem_cfg.telemetry_rate_hz);
+        telem_cfg.attitude_rate_hz       = get_or<double>(m, "attitude_rate_hz",       telem_cfg.attitude_rate_hz);
+        telem_cfg.velocity_rate_hz       = get_or<double>(m, "velocity_rate_hz",       telem_cfg.velocity_rate_hz);
+        telem_cfg.status_rate_hz         = get_or<double>(m, "status_rate_hz",         telem_cfg.status_rate_hz);
         telem_cfg.enable_debug_sniffer   = get_or<bool>(m,   "enable_debug_sniffer",   telem_cfg.enable_debug_sniffer);
         telem_cfg.enable_statustext      = get_or<bool>(m,   "enable_statustext",      telem_cfg.enable_statustext);
         telem_cfg.debug_dump_interval_s  = get_or<double>(m, "debug_dump_interval_s",  telem_cfg.debug_dump_interval_s);

@@ -5,7 +5,9 @@
     "mavsdk": {
         "connection_url":          "udpin://0.0.0.0:14540",
         "connect_timeout_s":       30.0,
-        "telemetry_rate_hz":       20.0,
+        "attitude_rate_hz":        100.0,
+        "velocity_rate_hz":        50.0,
+        "status_rate_hz":          10.0,
         "enable_debug_sniffer":    true,
         "enable_statustext":       true,
         "debug_dump_interval_s":   5.0

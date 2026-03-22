@@ -16,10 +16,12 @@
 #include "../utils/logger.hpp"
 
 struct TelemetryConfig {
-    double telemetry_rate_hz    = 20.0;
-    bool   enable_debug_sniffer = true;
-    bool   enable_statustext    = true;
-    double heartbeat_timeout_s  = 3.0;
+    double attitude_rate_hz      = 100.0;  // quaternion + euler (EKFRingBuffer feed)
+    double velocity_rate_hz      = 50.0;   // position_velocity_ned + position (PID feed)
+    double status_rate_hz        = 10.0;   // armed, in_air (state flags)
+    bool   enable_debug_sniffer  = true;
+    bool   enable_statustext     = true;
+    double heartbeat_timeout_s   = 3.0;
     double debug_dump_interval_s = 5.0;
 };
 
