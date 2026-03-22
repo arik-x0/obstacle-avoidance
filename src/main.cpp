@@ -161,6 +161,7 @@ int main(int argc, char** argv) {
         av_cfg.lateral_kp        = get_or<float>(a, "lateral_kp",        av_cfg.lateral_kp);
         av_cfg.lateral_ki        = get_or<float>(a, "lateral_ki",        av_cfg.lateral_ki);
         av_cfg.lateral_kd        = get_or<float>(a, "lateral_kd",        av_cfg.lateral_kd);
+        av_cfg.obs_max_age_s     = get_or<float>(a, "obs_max_age_s",     av_cfg.obs_max_age_s);
     }
 
     // PID

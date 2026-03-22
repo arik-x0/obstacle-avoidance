@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <numeric>
 #include <algorithm>
 
@@ -29,8 +30,25 @@ void AvoidancePlannerService::run() {
 
         if (enabled_) {
             SyncedObservation obs = ch_synced_.latest();
-            VelocityCommand   cmd = compute(obs);
-            ch_desired_vel_.publish(cmd);
+
+            // If the camera stalled, obs.timestamp_us will not advance.
+            // Treat observations older than obs_max_age_s as stale and hold.
+            const uint64_t max_age_us =
+                static_cast<uint64_t>(cfg_.obs_max_age_s * 1e6f);
+            const bool stale = (now_us() - obs.timestamp_us) > max_age_us;
+
+            if (stale) {
+                if (state_ != AvoidanceState::CLEAR) {
+                    logger_.warn("[AvoidancePlanner] Stale observation – holding");
+                    state_ = AvoidanceState::CLEAR;
+                }
+                VelocityCommand hold{};
+                hold.timestamp_us = now_us();
+                ch_desired_vel_.publish(hold);
+            } else {
+                VelocityCommand cmd = compute(obs);
+                ch_desired_vel_.publish(cmd);
+            }
         } else {
             // Avoidance disabled – publish a hold command so PIDService and
             // CommandService know we want zero velocity.

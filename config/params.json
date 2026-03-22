@@ -54,7 +54,8 @@
         "max_lateral_speed": 3.0,
         "lateral_kp":        1.5,
         "lateral_ki":        0.0,
-        "lateral_kd":        0.2
+        "lateral_kd":        0.2,
+        "obs_max_age_s":     0.5
     },
 
     "pid": {

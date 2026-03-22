@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <chrono>
+#include <cstdint>
 
 using namespace std::chrono_literals;
 
@@ -29,7 +30,18 @@ void DepthService::run() {
 
         // Feed the sliding window with the latest coverage sample.
         window_.push_back({sd.result.coverage_ratio, sd.timestamp_us});
+
+        // Evict entries that exceed the count cap.
         while (static_cast<int>(window_.size()) > cfg_.window_size) {
+            window_.pop_front();
+        }
+
+        // Evict entries older than max_sample_age_s so a camera stall does not
+        // leave the regression window polluted with stale data.
+        const uint64_t age_limit_us =
+            static_cast<uint64_t>(cfg_.max_sample_age_s * 1e6f);
+        while (!window_.empty() &&
+               sd.timestamp_us - window_.front().ts_us > age_limit_us) {
             window_.pop_front();
         }
 

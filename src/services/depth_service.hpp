@@ -12,6 +12,7 @@ struct DepthConfig {
     float ttc_max_s          = 30.0f; // cap on TTC output (no-threat sentinel)
     float min_confidence     = 0.3f;  // R² below this → treat as unreliable
     float max_approach_slope = 0.5f;  // coverage/s that maps to approach_speed_norm=1
+    float max_sample_age_s   = 1.0f;  // drop window entries older than this
 };
 
 // ── DepthService ──────────────────────────────────────────────────────────────

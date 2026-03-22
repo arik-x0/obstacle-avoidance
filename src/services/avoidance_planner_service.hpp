@@ -10,6 +10,10 @@ struct AvoidancePlannerConfig {
     // Poll rate
     float loop_rate_hz      = 20.0f;
 
+    // Maximum age of a SyncedObservation before it is treated as stale.
+    // If the camera stalls longer than this the planner holds position.
+    float obs_max_age_s     = 0.5f;
+
     // TTC thresholds (seconds)
     float ttc_clear_s       = 10.0f;  // above this → CLEAR (full cruise speed)
     float ttc_warn_s        = 6.0f;   // between warn and clear → MONITORING
