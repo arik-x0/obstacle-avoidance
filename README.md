@@ -7,26 +7,29 @@ A C++17 monocular obstacle avoidance system for PX4 / ArduPilot SITL drones, bui
 ## Architecture overview
 
 ```
-Camera HW ──► CameraService ──► DetectionService ──► DepthService   ──┐
-                                                                      │
-MAVSDK Telemetry ──► TelemetryService ──► EKFRingBuffer  ─────────────┤
-                             │                                        │
-                             └──► DataChannel<EKFSnapshot>            │
-                                                                      ▼
-                                                               SyncService
-                                                                      │
-                                                                      ▼
-                                                       AvoidancePlannerService
-                                                                      │
-                             ┌────────────────────────────────────────┘
-                             ▼
-                         PIDService
-                             │
-                             ▼
-                       CommandService ◄─── FlightManagerService
-                             │
-                             ▼
-                        MAVSDK Offboard / Action
+Camera HW ──► CameraService
+                    │ ch_frame
+                    ▼
+            DetectionService
+                    │ ch_detection
+                    ├────────────────────────────────────────────┐
+                    ▼                                            │
+              DepthService                                       │
+                    │ ch_depth                                   │
+                    ├──-────────────────-──────────────────┐     │
+                    │                                      ▼     ▼
+MAVSDK ──► TelemetryService ──► EKFRingBuffer   ──────►  SyncService
+                    │                                          │ ch_synced
+                  ch_ekf                                       ▼
+                    │                               AvoidancePlannerService
+                    │                                          │ ch_desired_vel
+                    ├────────────────────────────────────► PIDService ◄── ch_depth
+                    │                                          │ cq_corrected_vel
+                    ▼                                          ▼
+       FlightManagerService ──► cq_flight_cmd ──►       CommandService
+                                                               │
+                                                               ▼
+                                                      MAVSDK Offboard / Action
 ```
 
 ### Services
