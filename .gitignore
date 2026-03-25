@@ -36,3 +36,4 @@ vcpkg.json
 .claude/
 build/
 .vscode/
+.cache/

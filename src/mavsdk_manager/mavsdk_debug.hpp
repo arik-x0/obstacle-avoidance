@@ -113,32 +113,21 @@ public:
     {}
 
     // Install message sniffer.
-    // If watch_all=true we intercept every message (slight CPU overhead).
-    // Otherwise only the predefined interesting IDs are subscribed.
-    void enable_sniffer(bool watch_all = true) {
+    // Subscribes to all predefined interesting message IDs.
+    // (Per-message intercept API was removed in newer MAVSDK versions.)
+    void enable_sniffer(bool /*watch_all*/ = true) {
         if (sniffing_.exchange(true)) return;  // already enabled
 
-        if (watch_all) {
-            // intercept_incoming_messages fires for EVERY message before it
-            // is processed by MAVSDK plugins – ideal for timing analysis.
-            passthrough_.intercept_incoming_messages_async(
-                [this](mavlink_message_t& msg) -> bool {
-                    record_message(msg);
-                    return true;  // always forward
-                });
-            logger_.info("[MavsdkDebugger] All-message sniffer ACTIVE");
-        } else {
-            // Subscribe only to the interesting set to reduce overhead.
-            for (uint32_t id : interesting_ids_) {
-                passthrough_.subscribe_message_async(
+        for (uint32_t id : interesting_ids_) {
+            sub_handles_.push_back(
+                passthrough_.subscribe_message(
                     id,
                     [this](const mavlink_message_t& msg) {
                         record_message(msg);
-                    });
-            }
-            logger_.info("[MavsdkDebugger] Selective sniffer ACTIVE (",
-                         interesting_ids_.size(), " message types)");
+                    }));
         }
+        logger_.info("[MavsdkDebugger] Sniffer ACTIVE (",
+                     interesting_ids_.size(), " message types)");
     }
 
     // Must be called when we send a MAVLink command so we can correlate ACKs.
@@ -153,24 +142,23 @@ public:
     void enable_command_tracker() {
         if (tracking_cmds_.exchange(true)) return;
 
-        passthrough_.subscribe_message_async(
-            mavlink_ids::COMMAND_ACK,
-            [this](const mavlink_message_t& msg) {
-                handle_command_ack(msg);
-            });
+        sub_handles_.push_back(
+            passthrough_.subscribe_message(
+                mavlink_ids::COMMAND_ACK,
+                [this](const mavlink_message_t& msg) {
+                    handle_command_ack(msg);
+                }));
         logger_.info("[MavsdkDebugger] Command ACK tracker ACTIVE");
     }
 
     // Enable STATUSTEXT forwarding so firmware log lines appear in our logger.
     void enable_statustext_mirror() {
-        passthrough_.subscribe_message_async(
+        sub_handles_.push_back(
+            passthrough_.subscribe_message(
             mavlink_ids::STATUSTEXT,
             [this](const mavlink_message_t& msg) {
                 // STATUSTEXT payload: uint8 severity + char[50] text
                 // Byte 0 = severity, bytes 1..50 = text (null-terminated)
-                const uint8_t* p = msg.payload64 ? nullptr : nullptr;
-                // Access raw payload via the mavlink_message_t union
-                const char* text = reinterpret_cast<const char*>(&msg.payload64[0]) + 1;
                 uint8_t severity = *reinterpret_cast<const uint8_t*>(&msg.payload64[0]);
                 char buf[51] = {};
                 // payload is packed – use the raw bytes
@@ -187,7 +175,7 @@ public:
                     default:
                         logger_.info("[FC] ", buf); break;
                 }
-            });
+            }));
         logger_.info("[MavsdkDebugger] STATUSTEXT mirror ACTIVE");
     }
 
@@ -335,6 +323,8 @@ private:
 
     std::atomic<bool> sniffing_{false};
     std::atomic<bool> tracking_cmds_{false};
+
+    std::vector<mavsdk::MavlinkPassthrough::MessageHandle> sub_handles_;
 
     // Message IDs that are interesting even without full sniffer
     const std::vector<uint32_t> interesting_ids_ = {

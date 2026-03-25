@@ -32,7 +32,6 @@ void TelemetryService::run() {
     telemetry_->set_rate_position_velocity_ned(cfg_.velocity_rate_hz);
     telemetry_->set_rate_position(cfg_.velocity_rate_hz);
     telemetry_->set_rate_in_air(cfg_.status_rate_hz);
-    telemetry_->set_rate_flight_mode(cfg_.status_rate_hz);
 
     setup_subscriptions();
 

@@ -89,10 +89,6 @@ target_include_directories(obstacle_avoidance PRIVATE
 # ── Link libraries ────────────────────────────────────────────────────────────
 target_link_libraries(obstacle_avoidance PRIVATE
     MAVSDK::mavsdk
-    MAVSDK::mavsdk_action
-    MAVSDK::mavsdk_telemetry
-    MAVSDK::mavsdk_offboard
-    MAVSDK::mavsdk_mavlink_passthrough
     ${OpenCV_LIBS}
     nlohmann_json::nlohmann_json
     Threads::Threads
