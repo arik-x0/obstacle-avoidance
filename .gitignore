@@ -30,4 +30,9 @@
 *.exe
 *.out
 *.app
+
+vcpkg.json
+
 .claude/
+build/
+.vscode/
