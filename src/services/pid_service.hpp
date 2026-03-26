@@ -4,63 +4,76 @@
 #include "../core/channel.hpp"
 #include "../core/command_queue.hpp"
 #include "../core/messages.hpp"
+#include "../navigation/rotation_tracker.hpp"
 #include "../utils/logger.hpp"
 
 struct PIDConfig {
     float loop_rate_hz = 20.0f;
 
     // ── Forward speed PID (TTC-based) ─────────────────────────────────────
-    // error = ttc_target_s - ttc_current_s
-    // output = scale factor applied to desired forward speed
-    float ttc_target_s      = 5.0f;   // desired TTC when approaching
+    // error  = ttc_current - ttc_target   (positive = obstacle too close)
+    // output = scale factor on the desired horizontal velocity [0, 1.5]
+    float ttc_target_s      = 5.0f;
     float fwd_kp            = 0.15f;
     float fwd_ki            = 0.02f;
     float fwd_kd            = 0.05f;
-    float fwd_max_integral  = 2.0f;   // anti-windup clamp
+    float fwd_max_integral  = 2.0f;
+    float fwd_deriv_tau     = 0.15f;   // first-order low-pass τ for derivative (s)
 
     // ── Altitude hold PID ────────────────────────────────────────────────
-    // error = alt_desired_m - alt_current_m
-    // output = down_m_s correction (negative = up)
+    // error  = target_alt - current_alt  (positive = too low → climb)
+    // output = down_m_s correction (negative = up in NED)
+    // Derivative is computed on the measurement (not the error) to avoid
+    // derivative kick when the target altitude is updated by FlightManager.
     float alt_kp            = 0.8f;
     float alt_ki            = 0.05f;
     float alt_kd            = 0.2f;
     float alt_max_integral  = 1.0f;
-    float alt_max_output_m_s = 1.5f;  // clamp vertical correction
+    float alt_max_output_m_s = 1.5f;
+    float alt_deriv_tau     = 0.1f;    // first-order low-pass τ for derivative (s)
 
-    // ── Lateral centre PID ───────────────────────────────────────────────
-    // error = 0.5 - centre_x_norm   (positive = obstacle left of centre → go right)
-    // output = lateral body-frame velocity correction
-    float lat_kp            = 1.2f;
-    float lat_ki            = 0.0f;
-    float lat_kd            = 0.15f;
-    float lat_max_integral  = 1.0f;
-    float lat_max_output_m_s = 1.5f;
+    // ── Rate limiting ─────────────────────────────────────────────────────
+    // Prevent step-changes in the velocity command (m/s per tick).
+    float max_delta_speed_per_tick = 0.5f;
 
-    // Rate limiting: max velocity change per tick to smooth commands
-    float max_delta_speed_per_tick = 0.5f;  // m/s per tick
+    // ── Control Barrier Function (CBF) safety filter ──────────────────────
+    // The CBF sits after all PID corrections and rate limiting.
+    // Safety function: h = TTC - cbf_ttc_min_s >= 0
+    // CBF constraint:  ∇h · u + γ · h >= 0
+    // When violated the velocity is minimally projected onto the safe halfspace.
+    // This guarantees TTC never falls below cbf_ttc_min_s regardless of what
+    // the upstream guidance layer sends.
+    bool  cbf_enabled       = true;
+    float cbf_ttc_min_s     = 1.5f;   // hard minimum TTC (safety boundary, s)
+    float cbf_gamma         = 1.0f;   // class-K function gain (higher = tighter)
+    float cbf_activate_h    = 3.0f;   // only engage CBF when h < this value
+    float camera_hfov_deg   = 60.0f;  // camera FOV for obstacle angle computation
 };
 
 // ── PIDService ────────────────────────────────────────────────────────────────
 //
-// Runs three PID loops that refine the desired velocity from
-// AvoidancePlannerService before passing it on to CommandService.
+// Runs two PID loops and a CBF safety filter that refine the desired velocity
+// from AvoidancePlannerService before passing it to CommandService.
 //
-// Loop 1 – Forward speed PID (TTC-based):
-//   When an obstacle is approaching, scale down forward speed so we maintain
-//   a comfortable time-to-collision (ttc_target_s).
+// PID 1 – Forward speed (TTC-based):
+//   Scales horizontal velocity to maintain a comfortable time-to-collision.
+//   Active only when depth.confidence > 0.2 and TTC is near the target.
 //
-// Loop 2 – Altitude hold PID:
-//   While flying, maintain the target altitude.  Any deviation caused by
-//   offboard mode drift is corrected via the down_m_s channel.
+// PID 2 – Altitude hold:
+//   Corrects down_m_s to maintain target_alt_m_ during manoeuvres.
+//   Uses derivative-on-measurement to avoid derivative kick when the target
+//   altitude changes. Uses a first-order low-pass on the derivative to
+//   suppress sensor noise. Uses conditional integration (anti-windup).
 //
-// Loop 3 – Lateral offset PID:
-//   During dodging, gently push the flight path away from the obstacle's
-//   centre pixel so the drone goes around rather than grazing it.
+// CBF safety filter:
+//   After rate limiting, projects the velocity command onto the safe halfspace
+//   defined by the CBF constraint when the safety margin h = TTC - ttc_min
+//   is too small. This is the minimum-modification safety guarantee.
 //
 // Inputs:
 //   ch_desired_vel – VelocityCommand from AvoidancePlannerService
-//   ch_ekf         – EKFSnapshot for altitude and velocity feedback
-//   ch_depth       – DepthEstimate for TTC feedback
+//   ch_ekf         – EKFSnapshot for altitude and attitude feedback
+//   ch_depth       – DepthEstimate for TTC and sector histogram feedback
 //
 // Output:
 //   cq_corrected   – CommandQueue<VelocityCommand> consumed by CommandService
@@ -82,6 +95,16 @@ public:
 private:
     void run() override;
 
+    // CBF safety filter: minimally modifies the NED velocity command so that
+    // the safety constraint ∇h·u + γ·h ≥ 0 is satisfied.
+    VelocityCommand apply_cbf(const VelocityCommand& u,
+                              const DepthEstimate&   depth,
+                              const EKFSnapshot&     ekf);
+
+    // Compute the weighted obstacle bearing angle (radians, body frame,
+    // positive = rightward) from the 8-sector edge density histogram.
+    float compute_obstacle_angle(const std::array<float, 8>& histogram) const;
+
     PIDConfig                       cfg_;
     DataChannel<VelocityCommand>&   ch_desired_vel_;
     DataChannel<EKFSnapshot>&       ch_ekf_;
@@ -91,11 +114,26 @@ private:
 
     float target_alt_m_{5.0f};
 
-    // PID integrators and previous errors
-    float fwd_integral_{0.0f},  fwd_prev_err_{0.0f};
-    float alt_integral_{0.0f},  alt_prev_err_{0.0f};
-    float lat_integral_{0.0f},  lat_prev_err_{0.0f};
+    // Forward speed PID state
+    float fwd_integral_{0.0f};
+    float fwd_prev_err_{0.0f};
+    float fwd_deriv_filt_{0.0f};   // filtered derivative
 
-    // Previous output for rate limiting
+    // Altitude hold PID state
+    float alt_integral_{0.0f};
+    float prev_alt_m_{0.0f};       // previous altitude measurement (derivative-on-measurement)
+    float alt_deriv_filt_{0.0f};   // filtered derivative
+
+    // Rate limiting
     VelocityCommand prev_output_{};
+
+    // Timing – actual elapsed dt is measured each tick instead of using a
+    // fixed value so that integrators and derivatives are accurate under
+    // OS scheduling jitter.
+    std::chrono::steady_clock::time_point prev_tick_time_{};
+    bool first_tick_{true};
+
+    // Rotation tracker needed by the CBF filter to convert between NED and
+    // body frame for the constraint direction computation.
+    RotationTracker rotation_;
 };
