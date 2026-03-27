@@ -68,7 +68,7 @@ void TelemetryService::run() {
 }
 
 void TelemetryService::setup_subscriptions() {
-    // Attitude quaternion (EKF3 output – keep the full quaternion)
+    // Attitude quaternion
     telemetry_->subscribe_attitude_quaternion(
         [this](mavsdk::Telemetry::Quaternion q) {
             std::lock_guard<std::mutex> lk(mtx_);

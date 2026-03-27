@@ -30,38 +30,55 @@
 
 // Well-known MAVLink common message IDs (avoid including full MAVLink headers
 // here so the debug module stays dependency-light).
+//
+// Includes both common messages (sent by ArduPilot and PX4) and
+// PX4-specific messages used for EKF health and landed-state reporting.
 namespace mavlink_ids {
-    constexpr uint32_t HEARTBEAT             = 0;
-    constexpr uint32_t SYS_STATUS            = 1;
-    constexpr uint32_t ATTITUDE              = 30;
-    constexpr uint32_t ATTITUDE_QUATERNION   = 31;
-    constexpr uint32_t LOCAL_POSITION_NED    = 32;
-    constexpr uint32_t GLOBAL_POSITION_INT   = 33;
-    constexpr uint32_t RC_CHANNELS_RAW       = 35;
-    constexpr uint32_t SERVO_OUTPUT_RAW      = 36;
-    constexpr uint32_t MISSION_CURRENT       = 42;
-    constexpr uint32_t VFR_HUD               = 74;
-    constexpr uint32_t COMMAND_ACK           = 77;
-    constexpr uint32_t POSITION_TARGET_LOCAL_NED = 85;
-    constexpr uint32_t HIGHRES_IMU           = 105;
-    constexpr uint32_t STATUSTEXT            = 253;
+    // ── MAVLink common (both ArduPilot and PX4) ──────────────────────────
+    constexpr uint32_t HEARTBEAT                 = 0;
+    constexpr uint32_t SYS_STATUS                = 1;
+    constexpr uint32_t ATTITUDE                  = 30;
+    constexpr uint32_t ATTITUDE_QUATERNION        = 31;
+    constexpr uint32_t LOCAL_POSITION_NED         = 32;
+    constexpr uint32_t GLOBAL_POSITION_INT        = 33;
+    constexpr uint32_t RC_CHANNELS_RAW            = 35;
+    constexpr uint32_t SERVO_OUTPUT_RAW           = 36;
+    constexpr uint32_t MISSION_CURRENT            = 42;
+    constexpr uint32_t VFR_HUD                    = 74;
+    constexpr uint32_t COMMAND_ACK                = 77;
+    constexpr uint32_t POSITION_TARGET_LOCAL_NED  = 85;
+    constexpr uint32_t HIGHRES_IMU                = 105;
+    constexpr uint32_t STATUSTEXT                 = 253;
+
+    // ── PX4-specific ─────────────────────────────────────────────────────
+    // ESTIMATOR_STATUS (230): EKF2 health flags — velocity/position/height
+    // variance, GPS check flags.  Useful for confirming EKF is healthy
+    // before switching to offboard mode.
+    constexpr uint32_t ESTIMATOR_STATUS           = 230;
+
+    // EXTENDED_SYS_STATE (245): landed state (ON_GROUND / IN_AIR /
+    // TAKING_OFF / LANDING) and VTOL state.  PX4 uses this instead of
+    // the ArduPilot LAND_DETECTED message.
+    constexpr uint32_t EXTENDED_SYS_STATE         = 245;
 
     inline std::string name_of(uint32_t id) {
         switch (id) {
-            case HEARTBEAT:               return "HEARTBEAT";
-            case SYS_STATUS:              return "SYS_STATUS";
-            case ATTITUDE:                return "ATTITUDE";
-            case ATTITUDE_QUATERNION:     return "ATTITUDE_QUATERNION";
-            case LOCAL_POSITION_NED:      return "LOCAL_POSITION_NED";
-            case GLOBAL_POSITION_INT:     return "GLOBAL_POSITION_INT";
-            case RC_CHANNELS_RAW:         return "RC_CHANNELS_RAW";
-            case SERVO_OUTPUT_RAW:        return "SERVO_OUTPUT_RAW";
-            case MISSION_CURRENT:         return "MISSION_CURRENT";
-            case VFR_HUD:                 return "VFR_HUD";
-            case COMMAND_ACK:             return "COMMAND_ACK";
-            case POSITION_TARGET_LOCAL_NED: return "POSITION_TGT_NED";
-            case HIGHRES_IMU:             return "HIGHRES_IMU";
-            case STATUSTEXT:              return "STATUSTEXT";
+            case HEARTBEAT:                  return "HEARTBEAT";
+            case SYS_STATUS:                 return "SYS_STATUS";
+            case ATTITUDE:                   return "ATTITUDE";
+            case ATTITUDE_QUATERNION:        return "ATTITUDE_QUATERNION";
+            case LOCAL_POSITION_NED:         return "LOCAL_POSITION_NED";
+            case GLOBAL_POSITION_INT:        return "GLOBAL_POSITION_INT";
+            case RC_CHANNELS_RAW:            return "RC_CHANNELS_RAW";
+            case SERVO_OUTPUT_RAW:           return "SERVO_OUTPUT_RAW";
+            case MISSION_CURRENT:            return "MISSION_CURRENT";
+            case VFR_HUD:                    return "VFR_HUD";
+            case COMMAND_ACK:                return "COMMAND_ACK";
+            case POSITION_TARGET_LOCAL_NED:  return "POSITION_TGT_NED";
+            case HIGHRES_IMU:                return "HIGHRES_IMU";
+            case STATUSTEXT:                 return "STATUSTEXT";
+            case ESTIMATOR_STATUS:           return "ESTIMATOR_STATUS";
+            case EXTENDED_SYS_STATE:         return "EXTENDED_SYS_STATE";
             default: {
                 std::ostringstream oss;
                 oss << "MSG_" << id;
@@ -326,7 +343,10 @@ private:
 
     std::vector<mavsdk::MavlinkPassthrough::MessageHandle> sub_handles_;
 
-    // Message IDs that are interesting even without full sniffer
+    // Message IDs subscribed by the sniffer.
+    // Includes PX4-specific IDs (ESTIMATOR_STATUS, EXTENDED_SYS_STATE) that
+    // ArduPilot does not send — they will simply never fire on ArduPilot, so
+    // the list is safe to use with both autopilots.
     const std::vector<uint32_t> interesting_ids_ = {
         mavlink_ids::HEARTBEAT,
         mavlink_ids::SYS_STATUS,
@@ -336,5 +356,7 @@ private:
         mavlink_ids::COMMAND_ACK,
         mavlink_ids::STATUSTEXT,
         mavlink_ids::POSITION_TARGET_LOCAL_NED,
+        mavlink_ids::ESTIMATOR_STATUS,    // PX4: EKF2 health flags
+        mavlink_ids::EXTENDED_SYS_STATE,  // PX4: landed / in-air / taking-off state
     };
 };
