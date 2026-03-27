@@ -145,23 +145,22 @@ int main(int argc, char** argv) {
         telem_cfg.debug_dump_interval_s  = get_or<double>(m, "debug_dump_interval_s",  telem_cfg.debug_dump_interval_s);
     }
 
-    // Avoidance planner
+    // Avoidance planner (APF guidance layer)
     AvoidancePlannerConfig av_cfg;
     if (cfg.contains("avoidance")) {
         auto& a = cfg["avoidance"];
-        av_cfg.cruise_speed_m_s  = get_or<float>(a, "cruise_speed_m_s",  av_cfg.cruise_speed_m_s);
-        av_cfg.dodge_speed_m_s   = get_or<float>(a, "dodge_speed_m_s",   av_cfg.dodge_speed_m_s);
-        av_cfg.ascent_speed_m_s  = get_or<float>(a, "ascent_speed_m_s",  av_cfg.ascent_speed_m_s);
-        av_cfg.ttc_clear_s       = get_or<float>(a, "ttc_clear_s",       av_cfg.ttc_clear_s);
-        av_cfg.ttc_warn_s        = get_or<float>(a, "ttc_warn_s",        av_cfg.ttc_warn_s);
-        av_cfg.ttc_brake_s       = get_or<float>(a, "ttc_brake_s",       av_cfg.ttc_brake_s);
-        av_cfg.ttc_dodge_s       = get_or<float>(a, "ttc_dodge_s",       av_cfg.ttc_dodge_s);
-        av_cfg.max_forward_speed = get_or<float>(a, "max_forward_speed", av_cfg.max_forward_speed);
-        av_cfg.max_lateral_speed = get_or<float>(a, "max_lateral_speed", av_cfg.max_lateral_speed);
-        av_cfg.lateral_kp        = get_or<float>(a, "lateral_kp",        av_cfg.lateral_kp);
-        av_cfg.lateral_ki        = get_or<float>(a, "lateral_ki",        av_cfg.lateral_ki);
-        av_cfg.lateral_kd        = get_or<float>(a, "lateral_kd",        av_cfg.lateral_kd);
-        av_cfg.obs_max_age_s     = get_or<float>(a, "obs_max_age_s",     av_cfg.obs_max_age_s);
+        av_cfg.obs_max_age_s           = get_or<float>(a, "obs_max_age_s",           av_cfg.obs_max_age_s);
+        av_cfg.k_att                   = get_or<float>(a, "k_att",                   av_cfg.k_att);
+        av_cfg.k_rep                   = get_or<float>(a, "k_rep",                   av_cfg.k_rep);
+        av_cfg.k_damp                  = get_or<float>(a, "k_damp",                  av_cfg.k_damp);
+        av_cfg.ttc_influence_s         = get_or<float>(a, "ttc_influence_s",         av_cfg.ttc_influence_s);
+        av_cfg.camera_hfov_deg         = get_or<float>(a, "camera_hfov_deg",         av_cfg.camera_hfov_deg);
+        av_cfg.max_speed_m_s           = get_or<float>(a, "max_speed_m_s",           av_cfg.max_speed_m_s);
+        av_cfg.ascent_speed_m_s        = get_or<float>(a, "ascent_speed_m_s",        av_cfg.ascent_speed_m_s);
+        av_cfg.ttc_emergency_s         = get_or<float>(a, "ttc_emergency_s",         av_cfg.ttc_emergency_s);
+        av_cfg.stuck_vel_threshold_m_s = get_or<float>(a, "stuck_vel_threshold_m_s", av_cfg.stuck_vel_threshold_m_s);
+        av_cfg.stuck_timeout_ticks     = get_or<int>  (a, "stuck_timeout_ticks",     av_cfg.stuck_timeout_ticks);
+        av_cfg.stuck_kick_speed_m_s    = get_or<float>(a, "stuck_kick_speed_m_s",    av_cfg.stuck_kick_speed_m_s);
     }
 
     // PID
@@ -172,13 +171,20 @@ int main(int argc, char** argv) {
         pid_cfg.fwd_kp                   = get_or<float>(p, "fwd_kp",                   pid_cfg.fwd_kp);
         pid_cfg.fwd_ki                   = get_or<float>(p, "fwd_ki",                   pid_cfg.fwd_ki);
         pid_cfg.fwd_kd                   = get_or<float>(p, "fwd_kd",                   pid_cfg.fwd_kd);
+        pid_cfg.fwd_max_integral         = get_or<float>(p, "fwd_max_integral",         pid_cfg.fwd_max_integral);
+        pid_cfg.fwd_deriv_tau            = get_or<float>(p, "fwd_deriv_tau",            pid_cfg.fwd_deriv_tau);
         pid_cfg.alt_kp                   = get_or<float>(p, "alt_kp",                   pid_cfg.alt_kp);
         pid_cfg.alt_ki                   = get_or<float>(p, "alt_ki",                   pid_cfg.alt_ki);
         pid_cfg.alt_kd                   = get_or<float>(p, "alt_kd",                   pid_cfg.alt_kd);
-        pid_cfg.lat_kp                   = get_or<float>(p, "lat_kp",                   pid_cfg.lat_kp);
-        pid_cfg.lat_ki                   = get_or<float>(p, "lat_ki",                   pid_cfg.lat_ki);
-        pid_cfg.lat_kd                   = get_or<float>(p, "lat_kd",                   pid_cfg.lat_kd);
+        pid_cfg.alt_max_integral         = get_or<float>(p, "alt_max_integral",         pid_cfg.alt_max_integral);
+        pid_cfg.alt_max_output_m_s       = get_or<float>(p, "alt_max_output_m_s",       pid_cfg.alt_max_output_m_s);
+        pid_cfg.alt_deriv_tau            = get_or<float>(p, "alt_deriv_tau",            pid_cfg.alt_deriv_tau);
         pid_cfg.max_delta_speed_per_tick = get_or<float>(p, "max_delta_speed_per_tick", pid_cfg.max_delta_speed_per_tick);
+        pid_cfg.cbf_enabled              = get_or<bool> (p, "cbf_enabled",              pid_cfg.cbf_enabled);
+        pid_cfg.cbf_ttc_min_s            = get_or<float>(p, "cbf_ttc_min_s",            pid_cfg.cbf_ttc_min_s);
+        pid_cfg.cbf_gamma                = get_or<float>(p, "cbf_gamma",                pid_cfg.cbf_gamma);
+        pid_cfg.cbf_activate_h           = get_or<float>(p, "cbf_activate_h",           pid_cfg.cbf_activate_h);
+        pid_cfg.camera_hfov_deg          = get_or<float>(p, "camera_hfov_deg",          pid_cfg.camera_hfov_deg);
     }
 
     // Command

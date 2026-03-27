@@ -4,13 +4,16 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <numeric>
 #include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 using namespace std::chrono_literals;
 
 AvoidancePlannerService::AvoidancePlannerService(
-        const AvoidancePlannerConfig&  cfg,
+        const AvoidancePlannerConfig&   cfg,
         DataChannel<SyncedObservation>& ch_synced,
         DataChannel<VelocityCommand>&   ch_desired_vel,
         Logger&                         logger)
@@ -20,8 +23,10 @@ AvoidancePlannerService::AvoidancePlannerService(
     , logger_(logger)
 {}
 
+// ── run ───────────────────────────────────────────────────────────────────────
+
 void AvoidancePlannerService::run() {
-    logger_.info("[AvoidancePlannerService] Started");
+    logger_.info("[AvoidancePlannerService] Started (APF guidance)");
 
     const auto period = std::chrono::duration<double>(1.0 / cfg_.loop_rate_hz);
 
@@ -31,27 +36,31 @@ void AvoidancePlannerService::run() {
         if (enabled_) {
             SyncedObservation obs = ch_synced_.latest();
 
-            // If the camera stalled, obs.timestamp_us will not advance.
-            // Treat observations older than obs_max_age_s as stale and hold.
             const uint64_t max_age_us =
                 static_cast<uint64_t>(cfg_.obs_max_age_s * 1e6f);
             const bool stale = (now_us() - obs.timestamp_us) > max_age_us;
 
+            VelocityCommand cmd{};
+            cmd.timestamp_us = now_us();
+
             if (stale) {
                 if (state_ != AvoidanceState::CLEAR) {
-                    logger_.warn("[AvoidancePlanner] Stale observation – holding");
+                    logger_.warn("[AvoidancePlanner] Stale observation – coasting forward");
                     state_ = AvoidanceState::CLEAR;
                 }
-                VelocityCommand hold{};
-                hold.timestamp_us = now_us();
-                ch_desired_vel_.publish(hold);
+                // On stale data coast forward at half cruise speed.
+                float north, east, down_dummy;
+                rotation_.body_to_ned(cfg_.k_att * 0.5f, 0.0f, 0.0f,
+                                      north, east, down_dummy);
+                cmd.north_m_s = north;
+                cmd.east_m_s  = east;
             } else {
-                VelocityCommand cmd = compute(obs);
-                ch_desired_vel_.publish(cmd);
+                cmd = compute(obs);
             }
+
+            ch_desired_vel_.publish(cmd);
         } else {
-            // Avoidance disabled – publish a hold command so PIDService and
-            // CommandService know we want zero velocity.
+            // Avoidance disabled – publish zero velocity (hold).
             VelocityCommand hold{};
             hold.timestamp_us = now_us();
             ch_desired_vel_.publish(hold);
@@ -67,7 +76,7 @@ void AvoidancePlannerService::run() {
     logger_.info("[AvoidancePlannerService] Stopped");
 }
 
-// ── Main compute ─────────────────────────────────────────────────────────────
+// ── compute ───────────────────────────────────────────────────────────────────
 
 VelocityCommand AvoidancePlannerService::compute(const SyncedObservation& obs) {
     rotation_.update(obs.ekf);
@@ -75,181 +84,151 @@ VelocityCommand AvoidancePlannerService::compute(const SyncedObservation& obs) {
     const auto& det   = obs.detection.result;
     const auto& depth = obs.depth;
 
-    float ttc = depth.ttc_s;
-    // If obstacle not actually detected, treat as infinite TTC
-    if (!det.obstacle_detected) ttc = cfg_.ttc_clear_s + 1.0f;
+    VelocityCommand cmd{};
+    cmd.timestamp_us = now_us();
+    cmd.yaw_deg      = obs.ekf.yaw_deg;
 
-    prev_state_ = state_;
+    const bool obstacle_active = det.obstacle_detected && depth.confidence > 0.2f;
 
-    // ── State transitions ─────────────────────────────────────────────────
-
-    switch (state_) {
-        case AvoidanceState::CLEAR:
-            if (det.obstacle_detected &&
-                det.sector == DetectionResult::Sector::CENTER &&
-                ttc < cfg_.ttc_warn_s) {
-                state_ = AvoidanceState::MONITORING;
-            }
-            break;
-
-        case AvoidanceState::MONITORING:
-            if (!det.obstacle_detected || ttc >= cfg_.ttc_clear_s) {
-                state_ = AvoidanceState::CLEAR;
-                dodge_dir_latched_ = false;
-            } else if (ttc < cfg_.ttc_brake_s) {
-                state_ = AvoidanceState::BRAKING;
-            }
-            break;
-
-        case AvoidanceState::BRAKING:
-            if (!det.obstacle_detected || ttc >= cfg_.ttc_warn_s) {
-                state_ = AvoidanceState::CLEAR;
-                dodge_dir_latched_ = false;
-            } else if (ttc < cfg_.ttc_dodge_s) {
-                if (!dodge_dir_latched_) {
-                    dodge_left_        = select_dodge_direction(depth.sector_histogram);
-                    dodge_dir_latched_ = true;
-                    rotation_.mark_yaw_start();
-                    logger_.info("[Planner] Dodge direction latched: ",
-                                 dodge_left_ ? "LEFT" : "RIGHT",
-                                 "  TTC=", ttc, " s");
-                }
-                state_ = dodge_left_ ? AvoidanceState::DODGING_LEFT
-                                     : AvoidanceState::DODGING_RIGHT;
-            }
-            break;
-
-        case AvoidanceState::DODGING_LEFT:
-        case AvoidanceState::DODGING_RIGHT:
-            if (!det.obstacle_detected || ttc >= cfg_.ttc_clear_s) {
-                state_ = AvoidanceState::CLEAR;
-                dodge_dir_latched_ = false;
-                lateral_integral_  = 0.0f;
-                logger_.info("[Planner] Path clear – resuming CLEAR");
-            } else if (det.threat() == DetectionResult::Threat::CRITICAL &&
-                       ttc < cfg_.ttc_dodge_s * 0.5f) {
-                state_ = AvoidanceState::CLIMBING;
-                logger_.warn("[Planner] Dodge insufficient – climbing");
-            }
-            break;
-
-        case AvoidanceState::CLIMBING:
-            if (!det.obstacle_detected || ttc >= cfg_.ttc_warn_s) {
-                state_ = AvoidanceState::CLEAR;
-                dodge_dir_latched_ = false;
-                logger_.info("[Planner] Obstacle cleared above – CLEAR");
-            }
-            break;
+    // ── Emergency climb override ──────────────────────────────────────────
+    // When TTC is critically low the APF may not react fast enough.
+    // Override with a direct climb command and let the obstacle pass overhead.
+    if (obstacle_active && depth.ttc_s < cfg_.ttc_emergency_s) {
+        if (state_ != AvoidanceState::CLIMBING) {
+            logger_.warn("[Planner] EMERGENCY CLIMB – TTC=", depth.ttc_s, " s");
+            state_ = AvoidanceState::CLIMBING;
+        }
+        prev_state_ = state_;
+        stuck_ticks_ = 0;
+        return build_climb(obs.ekf);
     }
 
+    // ── Attractive force (body frame) ─────────────────────────────────────
+    // Constant forward pull at cruise speed (k_att).  The goal is always
+    // "ahead" since this system has no global waypoint.
+    float f_att_x = cfg_.k_att;
+    float f_att_y = 0.0f;
+
+    // ── Repulsive force (body frame, Khatib TTC-space potential) ──────────
+    // U_rep = (1/2) * k_rep * (1/TTC - 1/TTC_0)²
+    // F_rep = k_rep * (1/TTC - 1/TTC_0) * (1/TTC²)  directed away from obstacle.
+    float f_rep_x = 0.0f;
+    float f_rep_y = 0.0f;
+
+    float ttc = obstacle_active ? depth.ttc_s : (cfg_.ttc_influence_s + 1.0f);
+
+    if (obstacle_active && ttc < cfg_.ttc_influence_s && ttc > 0.01f) {
+        float inv_ttc  = 1.0f / ttc;
+        float inv_ttc0 = 1.0f / cfg_.ttc_influence_s;
+        float f_rep_mag = cfg_.k_rep * (inv_ttc - inv_ttc0) * (inv_ttc * inv_ttc);
+
+        // Weight repulsion by sensor confidence to reduce noise-driven reactions.
+        f_rep_mag *= depth.confidence;
+
+        // Obstacle centroid bearing from the sector histogram.
+        float obstacle_angle = compute_obstacle_angle(depth.sector_histogram);
+
+        // Flee direction is directly opposite the obstacle bearing.
+        f_rep_x = -std::cos(obstacle_angle) * f_rep_mag;
+        f_rep_y = -std::sin(obstacle_angle) * f_rep_mag;
+
+        state_ = AvoidanceState::ACTIVE;
+    } else {
+        state_       = AvoidanceState::CLEAR;
+        stuck_ticks_ = 0;
+    }
+
+    // ── Velocity damping (body frame) ─────────────────────────────────────
+    // Acts as viscous friction: F_damp = -k_damp * v_body.
+    // Prevents oscillation at the attractive/repulsive equilibrium point.
+    float vel_fwd, vel_right, vel_dn;
+    rotation_.ned_to_body(obs.ekf.vel_north, obs.ekf.vel_east, obs.ekf.vel_down,
+                          vel_fwd, vel_right, vel_dn);
+
+    float f_damp_x = -cfg_.k_damp * vel_fwd;
+    float f_damp_y = -cfg_.k_damp * vel_right;
+
+    // ── Combine all forces ────────────────────────────────────────────────
+    float f_total_x = f_att_x + f_rep_x + f_damp_x;
+    float f_total_y = f_att_y + f_rep_y + f_damp_y;
+
+    // ── Stuck detection and lateral escape kick ───────────────────────────
+    // A local minimum (APF forces cancel) manifests as near-zero body speed
+    // while an obstacle is active.  Inject alternating lateral kicks to escape.
+    float vel_horiz = std::hypot(vel_fwd, vel_right);
+    if (obstacle_active && vel_horiz < cfg_.stuck_vel_threshold_m_s) {
+        stuck_ticks_++;
+    } else {
+        stuck_ticks_ = 0;
+    }
+
+    if (stuck_ticks_ > cfg_.stuck_timeout_ticks) {
+        // Alternate kick direction each timeout period.
+        if (stuck_ticks_ % cfg_.stuck_timeout_ticks == 0) {
+            stuck_kick_left_ = !stuck_kick_left_;
+        }
+        float kick = stuck_kick_left_
+                     ?  cfg_.stuck_kick_speed_m_s
+                     : -cfg_.stuck_kick_speed_m_s;
+        f_total_y += kick;
+        logger_.debug("[Planner] Stuck escape kick ",
+                      stuck_kick_left_ ? "LEFT" : "RIGHT",
+                      "  ticks=", stuck_ticks_);
+    }
+
+    // ── Clamp combined force to max horizontal speed ──────────────────────
+    float f_mag = std::hypot(f_total_x, f_total_y);
+    if (f_mag > cfg_.max_speed_m_s) {
+        float scale = cfg_.max_speed_m_s / f_mag;
+        f_total_x  *= scale;
+        f_total_y  *= scale;
+    }
+
+    // ── Log state transitions ─────────────────────────────────────────────
     if (state_ != prev_state_) {
-        logger_.info("[Planner] ", state_name(),
+        logger_.info("[Planner] → ", state_name(),
                      "  TTC=", ttc, " s",
-                     "  coverage=", det.coverage_ratio,
-                     "  conf=", depth.confidence);
+                     "  conf=", depth.confidence,
+                     "  |F|=", f_mag);
+        prev_state_ = state_;
     }
 
-    // ── Build setpoint ───────────────────────────────────────────────────
+    // ── Rotate body frame → NED ───────────────────────────────────────────
+    // The down component is zero here; altitude is corrected by PIDService.
+    float ned_down_dummy;
+    rotation_.body_to_ned(f_total_x, f_total_y, 0.0f,
+                          cmd.north_m_s, cmd.east_m_s, ned_down_dummy);
+    cmd.down_m_s = 0.0f;
 
-    switch (state_) {
-        case AvoidanceState::CLEAR:
-            return build_forward(obs.ekf, cfg_.cruise_speed_m_s);
+    return cmd;
+}
 
-        case AvoidanceState::MONITORING: {
-            // Scale cruise speed proportionally: slower as TTC decreases
-            float t = (ttc - cfg_.ttc_brake_s) /
-                      (cfg_.ttc_warn_s - cfg_.ttc_brake_s);
-            t = std::max(0.1f, std::min(1.0f, t));
-            return build_forward(obs.ekf, cfg_.cruise_speed_m_s * t);
-        }
+// ── compute_obstacle_angle ────────────────────────────────────────────────────
 
-        case AvoidanceState::BRAKING:
-            return build_hold(obs.ekf);
+float AvoidancePlannerService::compute_obstacle_angle(
+        const std::array<float, 8>& histogram) const {
+    // Map sector index i ∈ [0,7] to horizontal bearing in body frame.
+    // Sector 0 = left edge, sector 7 = right edge.
+    // Angle convention: positive = rightward (body +Y axis).
+    const float sector_rad =
+        (cfg_.camera_hfov_deg * static_cast<float>(M_PI) / 180.0f) / 8.0f;
 
-        case AvoidanceState::DODGING_LEFT:
-        case AvoidanceState::DODGING_RIGHT: {
-            VelocityCommand cmd = build_lateral_dodge(obs.ekf,
-                                                      cfg_.dodge_speed_m_s,
-                                                      dodge_left_);
-            // Lateral offset PID correction: nudge towards the cleaner side
-            // based on how centred the obstacle is in the frame.
-            // error > 0 means obstacle is to the right  → push more left
-            // error < 0 means obstacle is to the left   → push more right
-            float dt = 1.0f / cfg_.loop_rate_hz;
-            float error = det.centre_x_norm - 0.5f;   // [-0.5, +0.5]
+    float weighted_angle = 0.0f;
+    float total_density  = 0.0f;
 
-            lateral_integral_   += error * dt;
-            float lateral_deriv  = (error - lateral_prev_error_) / dt;
-            lateral_prev_error_  = error;
-
-            float pid_out = cfg_.lateral_kp * error
-                          + cfg_.lateral_ki * lateral_integral_
-                          + cfg_.lateral_kd * lateral_deriv;
-
-            // pid_out is a lateral correction in body frame (positive = rightward)
-            // We want to push away from the obstacle, so negate:
-            float correction_body = -pid_out * cfg_.max_lateral_speed;
-            float north_corr, east_corr, dummy;
-            rotation_.body_to_ned(0.0f, correction_body, 0.0f,
-                                   north_corr, east_corr, dummy);
-
-            cmd.north_m_s += north_corr;
-            cmd.east_m_s  += east_corr;
-
-            // Clamp to max lateral speed
-            float lateral_mag = std::sqrt(cmd.north_m_s * cmd.north_m_s +
-                                          cmd.east_m_s  * cmd.east_m_s);
-            if (lateral_mag > cfg_.max_lateral_speed) {
-                float scale = cfg_.max_lateral_speed / lateral_mag;
-                cmd.north_m_s *= scale;
-                cmd.east_m_s  *= scale;
-            }
-            return cmd;
-        }
-
-        case AvoidanceState::CLIMBING:
-            return build_climb(obs.ekf);
+    for (int i = 0; i < 8; i++) {
+        float angle = (static_cast<float>(i) - 3.5f) * sector_rad;
+        weighted_angle += angle * histogram[static_cast<size_t>(i)];
+        total_density  += histogram[static_cast<size_t>(i)];
     }
 
-    return build_hold(obs.ekf);
+    // If histogram is empty (no confident detection) return 0 (straight ahead).
+    return (total_density > 1e-4f) ? weighted_angle / total_density : 0.0f;
 }
 
-// ── Setpoint builders ─────────────────────────────────────────────────────────
+// ── build_climb ───────────────────────────────────────────────────────────────
 
-VelocityCommand AvoidancePlannerService::build_forward(const EKFSnapshot& ekf,
-                                                        float speed) {
-    VelocityCommand cmd{};
-    cmd.timestamp_us = now_us();
-    cmd.yaw_deg      = ekf.yaw_deg;
-    // Forward in body frame → rotate to NED using full R matrix
-    float down_dummy;
-    rotation_.body_to_ned(speed, 0.0f, 0.0f,
-                           cmd.north_m_s, cmd.east_m_s, down_dummy);
-    cmd.down_m_s = 0.0f;
-    return cmd;
-}
-
-VelocityCommand AvoidancePlannerService::build_lateral_dodge(const EKFSnapshot& ekf,
-                                                              float speed, bool left) {
-    VelocityCommand cmd{};
-    cmd.timestamp_us = now_us();
-    cmd.yaw_deg      = ekf.yaw_deg;
-    float right_speed = left ? -speed : speed;
-    float down_dummy;
-    rotation_.body_to_ned(0.0f, right_speed, 0.0f,
-                           cmd.north_m_s, cmd.east_m_s, down_dummy);
-    cmd.down_m_s = 0.0f;
-    return cmd;
-}
-
-VelocityCommand AvoidancePlannerService::build_hold(const EKFSnapshot& ekf) {
-    VelocityCommand cmd{};
-    cmd.timestamp_us = now_us();
-    cmd.yaw_deg      = ekf.yaw_deg;
-    return cmd;
-}
-
-VelocityCommand AvoidancePlannerService::build_climb(const EKFSnapshot& ekf) {
+VelocityCommand AvoidancePlannerService::build_climb(const EKFSnapshot& ekf) const {
     VelocityCommand cmd{};
     cmd.timestamp_us = now_us();
     cmd.yaw_deg      = ekf.yaw_deg;
@@ -257,27 +236,13 @@ VelocityCommand AvoidancePlannerService::build_climb(const EKFSnapshot& ekf) {
     return cmd;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-bool AvoidancePlannerService::select_dodge_direction(
-        const std::array<float, 8>& histogram) const {
-    // Sum edge density in left half (sectors 0-3) vs right half (sectors 4-7).
-    // Dodge towards the half with LESS edge density (clearer path).
-    float left_density  = 0.0f, right_density = 0.0f;
-    for (int i = 0; i <= cfg_.left_sector_end;   i++) left_density  += histogram[static_cast<size_t>(i)];
-    for (int i = cfg_.right_sector_start; i < 8; i++) right_density += histogram[static_cast<size_t>(i)];
-
-    return (left_density <= right_density);  // true = dodge left
-}
+// ── state_name ────────────────────────────────────────────────────────────────
 
 const char* AvoidancePlannerService::state_name() const {
     switch (state_) {
-        case AvoidanceState::CLEAR:         return "CLEAR";
-        case AvoidanceState::MONITORING:    return "MONITORING";
-        case AvoidanceState::BRAKING:       return "BRAKING";
-        case AvoidanceState::DODGING_LEFT:  return "DODGING_LEFT";
-        case AvoidanceState::DODGING_RIGHT: return "DODGING_RIGHT";
-        case AvoidanceState::CLIMBING:      return "CLIMBING";
+        case AvoidanceState::CLEAR:    return "CLEAR";
+        case AvoidanceState::ACTIVE:   return "ACTIVE";
+        case AvoidanceState::CLIMBING: return "CLIMBING";
     }
     return "UNKNOWN";
 }

@@ -131,8 +131,16 @@ void CommandService::execute_flight_command(FlightCommand cmd) {
         }
 
         case FlightCommand::START_OFFBOARD: {
-            // Must send at least one setpoint before calling start()
-            send_zero_setpoint();
+            // PX4 requires setpoints to be streaming for ≥500 ms before it
+            // accepts a mode switch to OFFBOARD.  ArduPilot accepts a single
+            // setpoint, but sending a 500 ms stream is safe on both autopilots.
+            // We send 10 setpoints at 50 ms intervals (~20 Hz) before calling
+            // start() to satisfy the PX4 requirement.
+            logger_.info("[CommandService] Pre-seeding offboard setpoints for PX4...");
+            for (int i = 0; i < 10; ++i) {
+                send_zero_setpoint();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
             auto r = offboard_->start();
             if (r != mavsdk::Offboard::Result::Success) {
                 logger_.error("[CommandService] START_OFFBOARD failed: ", r);
